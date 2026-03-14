@@ -74,7 +74,6 @@ source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows (PowerShell)
 
 pip install -e .
-pip install -e ".[voice]"      # required for voice mode (sounddevice + soundfile)
 ```
 
 ---
