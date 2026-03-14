@@ -1,18 +1,18 @@
 """
 agents/menu_agent.py — Menu Discovery Agent.
 
-Runs its own tool-calling loop so that parallel Send() branches
-never contaminate each other's message history.
+Uses LangGraph conditional edges instead of a manual tool-calling loop.
+- menu_agent_node  → calls the LLM, stores response in menu_messages
+- menu_tools_node  → executes tool calls, stores results in menu_messages
+- should_continue_menu → conditional edge: tool calls? → tools : → synthesizer
 """
 
-from typing import Literal
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
     AIMessage,
     ToolMessage,
 )
-from langgraph.types import Command
 
 from snackstack.config import llm
 from snackstack.state import StackState
@@ -22,63 +22,70 @@ from snackstack.logger import setup_logger
 
 logger = setup_logger("snackstack.menu_agent")
 
-MAX_TOOL_ITERATIONS = 5
-
 # LLM with menu tools bound
 menu_llm = llm.bind_tools(menu_tools_list)
 tool_map = {t.name: t for t in menu_tools_list}
 
 
-def menu_agent_node(state: StackState) -> Command[Literal["synthesizer_node"]]:
-    """
-    Menu Agent — invokes the LLM in a loop, executing any requested
-    tools until the model produces a final text answer.
-    """
-    logger.info("Processing menu query...")
+def menu_agent_node(state: StackState) -> dict:
+    """Call the LLM. On first invocation build the initial prompt
+    using persisted conversation history; on subsequent invocations
+    (after tool results) continue from menu_messages."""
 
-    # Build conversation history from prior turns for context
-    history_msgs = []
-    for msg in state.get("messages", [])[-6:]:
-        role = getattr(msg, "type", "unknown")
-        if role == "human":
-            history_msgs.append(HumanMessage(content=msg.content))
-        elif role == "ai" and msg.content:
-            history_msgs.append(AIMessage(content=msg.content))
+    existing = state.get("menu_messages") or []
 
-    # Fresh local message list — isolated from the shared graph state
-    local_msgs = [
-        SystemMessage(content=MENU_AGENT_PROMPT),
-        *history_msgs,
-        HumanMessage(content=state["user_query"]),
-    ]
+    if not existing:
+        # First call — conversation history is persisted via MemorySaver
+        logger.info("Processing menu query...")
+        history = state.get("messages", [])[-6:]
 
-    for iteration in range(MAX_TOOL_ITERATIONS):
-        response = menu_llm.invoke(local_msgs)
+        all_msgs = [
+            SystemMessage(content=MENU_AGENT_PROMPT),
+            *history,
+            HumanMessage(content=state["user_query"]),
+        ]
+    else:
+        # Subsequent call — tool results already in menu_messages
+        logger.info("Menu agent re-invoked after tool results")
+        all_msgs = existing
 
-        # ── No tool calls → agent is done ──
-        if not getattr(response, "tool_calls", None):
-            logger.info("Done (iteration %d)", iteration)
-            return Command(
-                goto="synthesizer_node",
-                update={
-                    "messages": [response],
-                    "menu_response": response.content,
-                },
-            )
+    response = menu_llm.invoke(all_msgs)
+    all_msgs = [*all_msgs, response]
 
-        # ── Execute requested tools ──
-        tool_names = [tc["name"] for tc in response.tool_calls]
-        logger.info("Tools: %s (iter %d)", tool_names, iteration)
-        local_msgs.append(response)
+    has_tools = bool(getattr(response, "tool_calls", None))
+    logger.info("Tool calls: %s", has_tools)
 
-        for tc in response.tool_calls:
-            result = tool_map[tc["name"]].invoke(tc["args"])
-            local_msgs.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+    update: dict = {"menu_messages": all_msgs}
 
-    # Safety: max iterations reached
-    fallback = response.content or "I found menu results but could not finalise a response."
-    logger.warning("Hit max iterations (%d)", MAX_TOOL_ITERATIONS)
-    return Command(
-        goto="synthesizer_node",
-        update={"messages": [AIMessage(content=fallback)], "menu_response": fallback},
-    )
+    if not has_tools:
+        update["menu_response"] = response.content
+        update["messages"] = [response]
+
+    return update
+
+
+def menu_tools_node(state: StackState) -> dict:
+    """Execute tool calls from the last AI message in menu_messages."""
+
+    all_msgs = list(state["menu_messages"])
+    last_msg = all_msgs[-1]
+    tool_names = [tc["name"] for tc in last_msg.tool_calls]
+    logger.info("Executing tools: %s", tool_names)
+
+    for tc in last_msg.tool_calls:
+        result = tool_map[tc["name"]].invoke(tc["args"])
+        all_msgs.append(
+            ToolMessage(content=str(result), tool_call_id=tc["id"])
+        )
+
+    return {"menu_messages": all_msgs}
+
+
+def should_continue_menu(state: StackState) -> str:
+    """Conditional edge: route to tools or synthesizer."""
+    menu_msgs = state.get("menu_messages") or []
+    if menu_msgs:
+        last = menu_msgs[-1]
+        if getattr(last, "tool_calls", None):
+            return "menu_tools_node"
+    return "synthesizer_node"

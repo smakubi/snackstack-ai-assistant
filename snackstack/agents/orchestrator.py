@@ -29,18 +29,6 @@ class OrchestratorDecision(BaseModel):
 routing_llm = llm.with_structured_output(OrchestratorDecision)
 
 
-def format_history(state: StackState, max_turns: int = 6) -> str:
-    """Build a short conversation summary from recent messages."""
-    history_lines = []
-    for msg in state.get("messages", [])[-max_turns:]:
-        role = getattr(msg, "type", "unknown")
-        if role == "human":
-            history_lines.append(f"Customer: {msg.content}")
-        elif role == "ai" and msg.content:
-            history_lines.append(f"Assistant: {msg.content[:200]}")
-    return "\n".join(history_lines)
-
-
 def orchestrator_node(
     state: StackState,
 ) -> Command[Literal["menu_agent_node", "order_agent_node"]]:
@@ -49,14 +37,24 @@ def orchestrator_node(
     query = state["user_query"]
     logger.info("Routing query: %s", query[:60])
 
-    history = format_history(state)
-    context = f"Conversation so far:\n{history}\n\nLatest query: {query}" if history else query
+    # Conversation history is persisted via MemorySaver — just use it
+    history = state.get("messages", [])[-6:]
 
     decision: OrchestratorDecision = routing_llm.invoke([
         SystemMessage(content=ORCHESTRATOR_PROMPT),
-        HumanMessage(content=context),
+        *history,
+        HumanMessage(content=query),
     ])
     logger.info("Agents: %s | Reason: %s", decision.agents, decision.reasoning)
 
-    sends = [Send(f"{agent}_node", state) for agent in decision.agents]
+    # Reset per-turn buffers BEFORE sending to agents
+    clean_state = {
+        **state,
+        "menu_messages": [],
+        "order_messages": [],
+        "menu_response": "",
+        "order_response": "",
+    }
+
+    sends = [Send(f"{agent}_node", clean_state) for agent in decision.agents]
     return Command(goto=sends, update={"route": decision.agents})

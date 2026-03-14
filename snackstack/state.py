@@ -13,6 +13,12 @@ class StackState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     user_query: str
     route: list[str]            # e.g. ["menu_agent", "order_agent"]
+
+    # Agent-local message buffers (isolated via add_messages reducer)
+    menu_messages: Annotated[list[AnyMessage], add_messages]
+    order_messages: Annotated[list[AnyMessage], add_messages]
+
+    # Agent outputs
     menu_response: str
     order_response: str
     final_answer: str

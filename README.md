@@ -74,6 +74,7 @@ source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows (PowerShell)
 
 pip install -e .
+pip install -e ".[voice]"      # required for voice mode (sounddevice + soundfile)
 ```
 
 ---
@@ -113,29 +114,21 @@ Available TTS voices: `alloy` · `echo` · `fable` · `onyx` · `nova` · `shimm
 
 ## Architecture
 
-```
-Voice / Text Input
-        │
-        ▼
-  ┌─────────────┐
-  │ Orchestrator │  ← Structured-output routing (Pydantic schema)
-  └──────┬──────┘
-         │  Send() — parallel dispatch
-    ┌────┴─────┐
-    ▼          ▼
-┌────────┐ ┌────────┐
-│  Menu  │ │ Order  │  ← Each runs its own tool-calling loop
-│ Agent  │ │ Agent  │
-└───┬────┘ └───┬────┘
-    │          │
-    ▼          ▼
-  ┌──────────────┐
-  │ Synthesizer  │  ← Merges responses into one reply
-  └──────┬───────┘
-         │
-         ▼
-  Voice / Text Output
-```
+<p align="center">
+  <img src="snackstack_architecture.svg" alt="SnackStack Architecture" width="680"/>
+</p>
+
+**How it works:**
+
+1. **Input** — voice is recorded and transcribed via Whisper STT; text goes straight through.
+2. **Orchestrator** — classifies the query using a Pydantic structured-output schema and conditionally dispatches to one or both agents via LangGraph's `Send()`. A greeting goes only to the menu agent; an order query goes only to the order agent; a mixed query fans out to both in parallel.
+3. **Agents** — each agent uses LangGraph **conditional edges** to decide whether to call its tool or go straight to the synthesizer. If the LLM response contains tool calls, the graph routes to the corresponding tools node, which executes the tools and loops back to the agent. This repeats until the LLM produces a final text answer.
+   - **Menu agent** → conditionally calls `search_menu_catalog` (ChromaDB RAG) when the query is food-related. Greetings skip the tool entirely.
+   - **Order agent** → conditionally calls `get_order_status`. If no identifier is found in the query, it first triggers `interrupt()` to ask the user (HITL).
+4. **Synthesizer** — merges responses from whichever agents ran into a single TTS-friendly reply.
+5. **Output** — spoken aloud via OpenAI TTS in voice mode, or printed to the terminal.
+
+Dashed arrows indicate **conditional edges** — the orchestrator decides which agents to invoke, and each agent's conditional edge decides whether to call its tool or proceed to the synthesizer.
 
 ---
 
@@ -231,9 +224,9 @@ In **voice mode** (`--voice`), HITL prompts are spoken aloud via TTS and the use
 | Concept | Where |
 |---------|-------|
 | **LangGraph StateGraph** with parallel dispatch via `Send()` | `graph.py`, `orchestrator.py` |
+| **Conditional edges** — agent → tools node loop or → synthesizer | `graph.py`, `menu_agent.py`, `order_agent.py` |
 | **RAG** — ChromaDB semantic search over menu items | `tools/rag.py`, `tools/menu_tools.py` |
 | **Structured output** — Pydantic schema for routing | `orchestrator.py` |
-| **Self-contained tool loops** — agents run tools internally | `menu_agent.py`, `order_agent.py` |
 | **Human-in-the-Loop** — `interrupt()` + `Command(resume=)` (voice-aware) | `order_agent.py`, `main.py` |
 | **Multi-turn memory** — `MemorySaver` + conversation context passed to orchestrator & agents | `graph.py`, `orchestrator.py`, `menu_agent.py` |
 | **Voice I/O** — Whisper STT + OpenAI TTS, playback via `sounddevice` | `voice/recorder.py`, `voice/speaker.py` |
