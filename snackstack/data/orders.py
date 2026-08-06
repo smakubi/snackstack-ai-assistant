@@ -63,9 +63,9 @@ ORDER_DATABASE: dict = {
 
 DELIVERY_POLICIES = """\
 DELIVERY OPTIONS:
-- Express (30 min): ₹49, available in metro cities
-- Standard (60 min): ₹29
-- Scheduled (choose time): Free on orders over ₹500
+- Express (30 min): $49, available in metro cities
+- Standard (60 min): $29
+- Scheduled (choose time): Free on orders over $500
 
 CANCELLATION & REFUND POLICY:
 | Order Status       | Refund         | Processing Time   |
