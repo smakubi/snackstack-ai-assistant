@@ -9,8 +9,6 @@ Accepts text or voice input, routes queries through an orchestrator to specialis
 ## Quick Start
 
 ```bash
-cd snackstack
-
 # 1. Set your OpenAI API key (pick one)
 cp .env.example .env               # then paste your key in .env
 # OR if it's already in your system environment, skip this step
@@ -60,7 +58,6 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ### Option A: uv ⚡ (recommended)
 
 ```bash
-cd snackstack
 uv sync                        # creates .venv, resolves deps, installs the package
 uv sync --extra voice          # required for voice mode (mic recording + audio playback)
 ```
@@ -68,7 +65,6 @@ uv sync --extra voice          # required for voice mode (mic recording + audio 
 ### Option B: pip
 
 ```bash
-cd snackstack
 python -m venv .venv
 source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows (PowerShell)
