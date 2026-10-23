@@ -118,15 +118,18 @@ def run_text_loop(assistant: SnackStackAssistant):
     logger.info("Goodbye — stay hungry!")
 
 
-def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5):
+def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5, continuous: bool = False):
     """REPL: speak queries, hear agent responses."""
     logger.info("SnackStack — Voice mode")
     logger.info("Press Enter once to listen (%s). Commands: reset | quit",
                 "VAD stops after speech ends" if assistant.use_vad else f"{duration}s fixed")
 
+    if continuous:
+        logger.info("Continuous mode: listening automatically after each reply. Ctrl+C to exit.")
+
     while True:
         try:
-            cmd = input("\n[Enter] to record, 'quit' to exit > ").strip()
+            cmd = "" if continuous else input("\\n[Enter] to record, 'quit' to exit > ").strip()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -136,7 +139,12 @@ def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5):
             assistant.reset()
             continue
 
-        user_text, answer = assistant.listen_and_ask(duration)
+        try:
+            user_text, answer = assistant.listen_and_ask(duration)
+        except KeyboardInterrupt:
+            break
+        if not user_text and continuous:
+            continue
         if user_text:
             logger.info("You said: %s", user_text)
         logger.info("SnackStack: %s", answer)
@@ -151,15 +159,18 @@ def main():
     parser.add_argument("--voice",     action="store_true", help="Full voice: mic + speaker")
     parser.add_argument("--vad", action="store_true", help="Stop recording after speech ends (use with --voice)")
     parser.add_argument("--stream", action="store_true", help="Stream TTS audio directly to speakers (with --voice or --voice-out)")
+    parser.add_argument("--continuous", action="store_true", help="Automatically listen again after each response (requires --voice --vad)")
     parser.add_argument("--voice-out", action="store_true", help="Text input + voice output")
     parser.add_argument("--tts-voice", default="nova",      help="TTS voice (default: nova)")
     args = parser.parse_args()
 
+    if args.continuous and not (args.voice and args.vad):
+        parser.error("--continuous requires --voice --vad")
     speak = args.voice or args.voice_out
     assistant = SnackStackAssistant(voice=args.tts_voice, speak=speak, use_vad=args.vad, stream_audio=args.stream)
 
     if args.voice:
-        run_voice_loop(assistant)
+        run_voice_loop(assistant, continuous=args.continuous)
     else:
         run_text_loop(assistant)
 
