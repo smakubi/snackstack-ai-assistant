@@ -59,7 +59,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ```bash
 uv sync                        # creates .venv, resolves deps, installs the package
-uv sync --extra voice          # required for voice mode (mic recording + audio playback)
+uv sync                        # voice dependencies are included by default
 ```
 
 ### Option B: pip
