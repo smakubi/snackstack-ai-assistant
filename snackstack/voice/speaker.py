@@ -55,7 +55,7 @@ class VoiceSpeaker:
         except Exception:
             logger.exception("Audio playback failed")
 
-    def speak_streaming(self, text: str) -> None:
+    def speak_streaming(self, text: str, cancel_event=None) -> None:
         """Stream raw PCM audio from TTS to the speaker without waiting for a file."""
         if not text.strip():
             return
@@ -69,6 +69,9 @@ class VoiceSpeaker:
                 with sd.RawOutputStream(samplerate=24000, channels=1, dtype="int16") as output:
                     pending = b""
                     for chunk in response.iter_bytes(chunk_size=4096):
+                        if cancel_event is not None and cancel_event.is_set():
+                            logger.info("TTS interrupted by user speech")
+                            break
                         pending += chunk
                         usable = len(pending) - (len(pending) % 2)
                         if usable:
@@ -76,7 +79,8 @@ class VoiceSpeaker:
                             pending = pending[usable:]
         except Exception:
             logger.exception("Streaming audio failed; falling back to file playback")
-            self.speak(text)
+            if cancel_event is None or not cancel_event.is_set():
+                self.speak(text)
 
     def speak(self, text: str, play: bool = True) -> str:
         """Synthesise text and optionally play it. Returns the file path."""
