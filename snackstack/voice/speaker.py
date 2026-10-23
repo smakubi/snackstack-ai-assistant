@@ -55,6 +55,29 @@ class VoiceSpeaker:
         except Exception:
             logger.exception("Audio playback failed")
 
+    def speak_streaming(self, text: str) -> None:
+        """Stream raw PCM audio from TTS to the speaker without waiting for a file."""
+        if not text.strip():
+            return
+        logger.info("Streaming TTS: %s", text[:120])
+        try:
+            with openai_client.audio.speech.with_streaming_response.create(
+                model="tts-1", voice=self.voice, input=text,
+                speed=self.speed, response_format="pcm",
+            ) as response:
+                # OpenAI PCM audio is 24 kHz, mono, signed 16-bit little-endian.
+                with sd.RawOutputStream(samplerate=24000, channels=1, dtype="int16") as output:
+                    pending = b""
+                    for chunk in response.iter_bytes(chunk_size=4096):
+                        pending += chunk
+                        usable = len(pending) - (len(pending) % 2)
+                        if usable:
+                            output.write(pending[:usable])
+                            pending = pending[usable:]
+        except Exception:
+            logger.exception("Streaming audio failed; falling back to file playback")
+            self.speak(text)
+
     def speak(self, text: str, play: bool = True) -> str:
         """Synthesise text and optionally play it. Returns the file path."""
         logger.info("Agent says: %s", text[:120])
