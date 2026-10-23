@@ -3,6 +3,7 @@ voice/recorder.py — Microphone recording + OpenAI Whisper transcription.
 """
 
 import io
+import collections
 import numpy as np
 
 try:
@@ -43,6 +44,57 @@ class VoiceRecorder:
             raise RuntimeError("Could not record microphone audio. Check macOS microphone permission and input device.") from exc
         logger.info("Recording complete")
         return audio.flatten()
+
+    def record_vad(self, max_duration: float = 20, silence_duration: float = 1.0,
+                   threshold: float = 0.012, start_timeout: float = 8.0) -> np.ndarray:
+        """Record until speech ends using a lightweight RMS energy detector.
+
+        This is energy-based VAD, not a neural speech classifier. Works offline.
+        """
+        if not AUDIO_HW_AVAILABLE:
+            raise RuntimeError("Microphone support unavailable. Run uv sync.")
+        blocksize = int(self.sample_rate * 0.03)
+        pre_roll = collections.deque(maxlen=12)
+        frames = []
+        started = False
+        quiet = 0.0
+        elapsed = 0.0
+        logger.info("Listening — speak now (up to %.0fs)", max_duration)
+        try:
+            with sd.InputStream(samplerate=self.sample_rate, channels=1,
+                                dtype="float32", blocksize=blocksize) as stream:
+                while elapsed < max_duration:
+                    block, overflow = stream.read(blocksize)
+                    if overflow:
+                        logger.warning("Microphone input overflow")
+                    chunk = block[:, 0].copy()
+                    elapsed += len(chunk) / self.sample_rate
+                    rms = float(np.sqrt(np.mean(chunk * chunk)))
+                    active = rms >= threshold
+                    if not started:
+                        pre_roll.append(chunk)
+                        if active:
+                            started = True
+                            frames.extend(pre_roll)
+                            logger.info("Speech detected")
+                        elif elapsed >= start_timeout:
+                            logger.warning("No speech detected within %.1fs", start_timeout)
+                            break
+                    else:
+                        frames.append(chunk)
+                        quiet = 0.0 if active else quiet + len(chunk) / self.sample_rate
+                        if quiet >= silence_duration:
+                            logger.info("End of speech detected")
+                            break
+        except Exception as exc:
+            raise RuntimeError("Microphone recording failed. Check macOS permissions and input device.") from exc
+        return np.concatenate(frames) if started and frames else np.empty(0, dtype=np.float32)
+
+    def record_and_transcribe_vad(self, max_duration: float = 20) -> tuple[np.ndarray, str]:
+        audio = self.record_vad(max_duration=max_duration)
+        text = self.transcribe(audio) if len(audio) else ""
+        logger.info("Transcription: %s", text)
+        return audio, text
 
     # ── transcription ───────────────────────────────────────
     def transcribe(self, audio: np.ndarray) -> str:
