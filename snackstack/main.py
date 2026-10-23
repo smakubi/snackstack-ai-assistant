@@ -23,9 +23,10 @@ logger = setup_logger("snackstack.main")
 class SnackStackAssistant:
     """Wires the compiled graph to CLI and voice I/O."""
 
-    def __init__(self, voice: str = "nova", speak: bool = False):
+    def __init__(self, voice: str = "nova", speak: bool = False, use_vad: bool = False):
         self.graph = build_graph()
         self.recorder = VoiceRecorder()
+        self.use_vad = use_vad
         self.speaker = VoiceSpeaker(voice=voice, speed=1.05) if speak else None
         self.thread_id = str(uuid.uuid4())
 
@@ -61,7 +62,8 @@ class SnackStackAssistant:
                 # Collect user response via mic or keyboard
                 if voice_input:
                     logger.info("Listening for HITL response...")
-                    _, user_input = self.recorder.record_and_transcribe(5)
+                    _, user_input = (self.recorder.record_and_transcribe_vad() if self.use_vad
+                                     else self.recorder.record_and_transcribe(5))
                     user_input = user_input.strip() if user_input else "unknown"
                 else:
                     user_input = input(f"\n{prompt}\nYou > ").strip() or "unknown"
@@ -80,7 +82,8 @@ class SnackStackAssistant:
 
     def listen_and_ask(self, duration: int = 5) -> tuple[str, str]:
         """Record from mic, transcribe, then run through the graph."""
-        _, text = self.recorder.record_and_transcribe(duration)
+        _, text = (self.recorder.record_and_transcribe_vad() if self.use_vad
+                   else self.recorder.record_and_transcribe(duration))
         if not text:
             return "", "Sorry, I didn't catch that. Please try again."
         return text, self.ask(text, voice_input=True)
@@ -116,7 +119,8 @@ def run_text_loop(assistant: SnackStackAssistant):
 def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5):
     """REPL: speak queries, hear agent responses."""
     logger.info("SnackStack — Voice mode")
-    logger.info("Press Enter to record (%ds). Commands: reset | quit", duration)
+    logger.info("Press Enter once to listen (%s). Commands: reset | quit",
+                "VAD stops after speech ends" if assistant.use_vad else f"{duration}s fixed")
 
     while True:
         try:
@@ -143,12 +147,13 @@ def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5):
 def main():
     parser = argparse.ArgumentParser(description="SnackStack Voice Assistant")
     parser.add_argument("--voice",     action="store_true", help="Full voice: mic + speaker")
+    parser.add_argument("--vad", action="store_true", help="Stop recording after speech ends (use with --voice)")
     parser.add_argument("--voice-out", action="store_true", help="Text input + voice output")
     parser.add_argument("--tts-voice", default="nova",      help="TTS voice (default: nova)")
     args = parser.parse_args()
 
     speak = args.voice or args.voice_out
-    assistant = SnackStackAssistant(voice=args.tts_voice, speak=speak)
+    assistant = SnackStackAssistant(voice=args.tts_voice, speak=speak, use_vad=args.vad)
 
     if args.voice:
         run_voice_loop(assistant)
