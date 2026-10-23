@@ -83,6 +83,7 @@ uv run snackstack --voice-out                # text input → voice output
 uv run snackstack --voice                    # fixed 5-second microphone capture
 uv run snackstack --voice --vad              # stop recording after speech ends
 uv run snackstack --voice --vad --stream     # VAD + streaming TTS playback
+uv run snackstack --voice --vad --stream --continuous  # hands-free half-duplex conversation
 uv run snackstack --voice-out --tts-voice shimmer   # pick a TTS voice
 ```
 
@@ -95,11 +96,11 @@ uv sync
 uv run snackstack --voice --vad --stream
 ```
 
-Press **Enter once**, then speak; do not hold Enter. With `--vad`, a local RMS-energy detector reads microphone audio in ~30 ms blocks, detects speech, and stops after approximately **1 second of silence**. It waits up to **8 seconds** for speech and caps recording at **20 seconds**. This is lightweight energy-based endpointing, **not** a neural VAD model such as Silero; background noise may cause false triggers.
+In regular voice mode, press **Enter once**, then speak; do not hold Enter. With `--continuous`, the app listens automatically again after each completed response; press **Ctrl+C** to stop. Continuous mode requires `--voice --vad` and works with `--stream`. It is half-duplex: the mic is not listening during TTS playback, so interruptions/barge-in are not supported. With `--vad`, a local RMS-energy detector reads microphone audio in ~30 ms blocks, detects speech, and stops after approximately **1 second of silence**. It waits up to **8 seconds** for speech and caps recording at **20 seconds**. This is lightweight energy-based endpointing, **not** a neural VAD model such as Silero; background noise may cause false triggers.
 
 With `--stream`, the app requests streaming **24 kHz mono PCM** from OpenAI TTS and plays chunks directly through `sounddevice`. If streaming playback fails, it attempts buffered WAV playback. Without `--stream`, the entire WAV is generated before playback. `--stream` also works with `--voice-out`.
 
-**Important:** The pipeline is still **turn-based**. VAD determines the end of the user's utterance; Whisper transcribes the completed recording; LangGraph and its LLM nodes generate complete results; only TTS playback is streamed. There is no incremental STT, LLM-token-to-TTS pipelining, continuous hands-free listening, or barge-in support yet.
+**Important:** The pipeline is still **turn-based**. VAD determines the end of the user's utterance; Whisper transcribes the completed recording; LangGraph and its LLM nodes generate complete results; only TTS playback is streamed. There is no incremental STT, LLM-token-to-TTS pipelining, simultaneous listening during playback, or barge-in support yet.
 
 **Troubleshooting:** If the microphone doesn't detect speech, check macOS microphone permissions and your default input device. If the app stops recording early, try a quieter environment. For a predictable fallback, run `uv run snackstack --voice` without VAD or streaming. The optional `voice` extra does **not** exist: use `uv sync`, not `uv sync --extra voice`.
 
