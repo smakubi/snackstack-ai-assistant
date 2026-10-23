@@ -31,4 +31,18 @@ This branch is for prototyping user interruptions during assistant speech. The s
 - Ctrl+C cleanly releases microphone and speaker resources.
 - Existing `--voice --vad --stream --continuous` remains functional.
 
-**Status:** design only; barge-in has not yet been implemented or validated.
+**Status:** experimental implementation committed on this branch; not yet tested on real hardware. This is interruptible half-duplex response handling, not full-duplex simultaneous generation.
+
+## Try it (headphones strongly recommended)
+
+```bash
+git fetch origin
+git switch feature/voice-barge-in
+git pull origin feature/voice-barge-in
+uv sync
+uv run snackstack --voice --vad --stream --continuous --barge-in
+```
+
+Ask: "Tell me about every dish on the menu." While the assistant speaks, say "Actually, what is vegan?" The experimental microphone listener should detect your speech, cancel PCM playback, finish capturing the utterance, transcribe it, and run the new query. Use Ctrl+C to stop. Compare with the stable command without `--barge-in`.
+
+**Limitations:** Use headphones; there is no acoustic echo cancellation, so speakers can self-trigger. This is energy threshold detection, not neural VAD or speaker verification. It cannot interrupt while the LLM is thinking or Whisper is transcribing. Interruptions during human-in-the-loop prompts are not fully handled. Microphone/audio behavior must be tested on your machine before classroom or production use.
