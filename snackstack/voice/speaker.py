@@ -34,10 +34,10 @@ class VoiceSpeaker:
 
     def synthesise(self, text: str) -> str:
         """Generate an MP3 file and return its path."""
-        out_path = os.path.join(self._out_dir, f"tts_{uuid.uuid4().hex[:8]}.mp3")
+        out_path = os.path.join(self._out_dir, f"tts_{uuid.uuid4().hex[:8]}.wav")
         try:
             resp = openai_client.audio.speech.create(
-                model="tts-1", voice=self.voice, input=text, speed=self.speed,
+                model="tts-1", voice=self.voice, input=text, speed=self.speed, response_format="wav",
             )
             resp.stream_to_file(out_path)
             logger.info("TTS saved → %s", out_path)
