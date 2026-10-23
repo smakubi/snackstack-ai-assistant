@@ -15,6 +15,7 @@ from langgraph.types import Command
 
 from snackstack.graph import build_graph
 from snackstack.voice import VoiceRecorder, VoiceSpeaker
+from snackstack.voice.barge_in import BargeInController
 from snackstack.logger import setup_logger
 
 logger = setup_logger("snackstack.main")
@@ -23,14 +24,27 @@ logger = setup_logger("snackstack.main")
 class SnackStackAssistant:
     """Wires the compiled graph to CLI and voice I/O."""
 
-    def __init__(self, voice: str = "nova", speak: bool = False, use_vad: bool = False, stream_audio: bool = False):
+    def __init__(self, voice: str = "nova", speak: bool = False, use_vad: bool = False, stream_audio: bool = False, barge_in: bool = False):
         self.graph = build_graph()
         self.recorder = VoiceRecorder()
         self.use_vad = use_vad
         self.stream_audio = stream_audio
+        self.barge_in = barge_in
+        self.pending_interruption = ""
 
         self.speaker = VoiceSpeaker(voice=voice, speed=1.05) if speak else None
         self.thread_id = str(uuid.uuid4())
+        self.barge_controller = BargeInController(self.recorder, self.speaker) if barge_in else None
+
+    def _speak(self, text):
+        if not self.speaker:
+            return
+        if self.barge_controller:
+            self.pending_interruption = self.barge_controller.speak_and_listen(text)
+        elif self.stream_audio:
+            self.speaker.speak_streaming(text)
+        else:
+            self.speaker.speak(text)
 
     @property
     def _config(self):
@@ -59,7 +73,7 @@ class SnackStackAssistant:
 
                 # Speak the interrupt prompt if voice is enabled
                 if self.speaker:
-                    self.speaker.speak_streaming(prompt) if self.stream_audio else self.speaker.speak(prompt)
+                    self._speak(prompt)
 
                 # Collect user response via mic or keyboard
                 if voice_input:
@@ -78,7 +92,7 @@ class SnackStackAssistant:
         answer = result.get("final_answer", "Sorry, I could not process your request.")
 
         if self.speaker:
-            self.speaker.speak_streaming(answer) if self.stream_audio else self.speaker.speak(answer)
+            self._speak(answer)
 
         return answer
 
@@ -140,7 +154,13 @@ def run_voice_loop(assistant: SnackStackAssistant, duration: int = 5, continuous
             continue
 
         try:
-            user_text, answer = assistant.listen_and_ask(duration)
+            if assistant.pending_interruption:
+                user_text = assistant.pending_interruption
+                assistant.pending_interruption = ""
+                logger.info("Processing barge-in: %s", user_text)
+                answer = assistant.ask(user_text, voice_input=True)
+            else:
+                user_text, answer = assistant.listen_and_ask(duration)
         except KeyboardInterrupt:
             break
         if not user_text and continuous:
@@ -160,14 +180,17 @@ def main():
     parser.add_argument("--vad", action="store_true", help="Stop recording after speech ends (use with --voice)")
     parser.add_argument("--stream", action="store_true", help="Stream TTS audio directly to speakers (with --voice or --voice-out)")
     parser.add_argument("--continuous", action="store_true", help="Automatically listen again after each response (requires --voice --vad)")
+    parser.add_argument("--barge-in", action="store_true", help="Experimental interruption of TTS; requires headphones and --voice --vad --stream --continuous")
     parser.add_argument("--voice-out", action="store_true", help="Text input + voice output")
     parser.add_argument("--tts-voice", default="nova",      help="TTS voice (default: nova)")
     args = parser.parse_args()
 
     if args.continuous and not (args.voice and args.vad):
         parser.error("--continuous requires --voice --vad")
+    if args.barge_in and not (args.voice and args.vad and args.stream and args.continuous):
+        parser.error("--barge-in requires --voice --vad --stream --continuous")
     speak = args.voice or args.voice_out
-    assistant = SnackStackAssistant(voice=args.tts_voice, speak=speak, use_vad=args.vad, stream_audio=args.stream)
+    assistant = SnackStackAssistant(voice=args.tts_voice, speak=speak, use_vad=args.vad, stream_audio=args.stream, barge_in=args.barge_in)
 
     if args.voice:
         run_voice_loop(assistant, continuous=args.continuous)
