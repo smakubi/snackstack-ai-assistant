@@ -58,8 +58,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ### Option A: uv ⚡ (recommended)
 
 ```bash
-uv sync                        # creates .venv, resolves deps, installs the package
-uv sync                        # voice dependencies are included by default
+uv sync                        # installs the package and all voice dependencies
 ```
 
 ### Option B: pip
@@ -81,9 +80,28 @@ With **uv** you don't need to activate the venv — `uv run` handles it:
 ```bash
 uv run snackstack                            # text mode (default)
 uv run snackstack --voice-out                # text input → voice output
-uv run snackstack --voice                    # full voice (mic → speaker)
+uv run snackstack --voice                    # fixed 5-second microphone capture
+uv run snackstack --voice --vad              # stop recording after speech ends
+uv run snackstack --voice --vad --stream     # VAD + streaming TTS playback
 uv run snackstack --voice-out --tts-voice shimmer   # pick a TTS voice
 ```
+
+### Voice Activity Detection (VAD) and streaming
+
+Recommended interactive voice demo:
+
+```bash
+uv sync
+uv run snackstack --voice --vad --stream
+```
+
+Press **Enter once**, then speak; do not hold Enter. With `--vad`, a local RMS-energy detector reads microphone audio in ~30 ms blocks, detects speech, and stops after approximately **1 second of silence**. It waits up to **8 seconds** for speech and caps recording at **20 seconds**. This is lightweight energy-based endpointing, **not** a neural VAD model such as Silero; background noise may cause false triggers.
+
+With `--stream`, the app requests streaming **24 kHz mono PCM** from OpenAI TTS and plays chunks directly through `sounddevice`. If streaming playback fails, it attempts buffered WAV playback. Without `--stream`, the entire WAV is generated before playback. `--stream` also works with `--voice-out`.
+
+**Important:** The pipeline is still **turn-based**. VAD determines the end of the user's utterance; Whisper transcribes the completed recording; LangGraph and its LLM nodes generate complete results; only TTS playback is streamed. There is no incremental STT, LLM-token-to-TTS pipelining, continuous hands-free listening, or barge-in support yet.
+
+**Troubleshooting:** If the microphone doesn't detect speech, check macOS microphone permissions and your default input device. If the app stops recording early, try a quieter environment. For a predictable fallback, run `uv run snackstack --voice` without VAD or streaming. The optional `voice` extra does **not** exist: use `uv sync`, not `uv sync --extra voice`.
 
 Responses in voice modes are optimised for speech — no markdown formatting, bullet points, or numbered lists.
 
@@ -115,13 +133,13 @@ Available TTS voices: `alloy` · `echo` · `fable` · `onyx` · `nova` · `shimm
 
 **How it works:**
 
-1. **Input** — voice is recorded and transcribed via Whisper STT; text goes straight through.
+1. **Input** — voice is captured for a fixed five seconds or endpointed with optional local energy-based VAD, then transcribed via Whisper STT; text goes straight through.
 2. **Orchestrator** — classifies the query using a Pydantic structured-output schema and conditionally dispatches to one or both agents via LangGraph's `Send()`. A greeting goes only to the menu agent; an order query goes only to the order agent; a mixed query fans out to both in parallel.
 3. **Agents** — each agent uses LangGraph **conditional edges** to decide whether to call its tool or go straight to the synthesizer. If the LLM response contains tool calls, the graph routes to the corresponding tools node, which executes the tool and **loops back** to the agent. This repeats until the LLM produces a final text answer.
    - **Menu agent** → conditionally calls `search_menu_catalog` (ChromaDB RAG) when the query is food-related. Greetings skip the tool entirely.
    - **Order agent** → conditionally calls `get_order_status`. If no identifier is found in the query, it first triggers `interrupt()` to ask the user (HITL).
 4. **Synthesizer** — merges responses from whichever agents ran into a single TTS-friendly reply.
-5. **Output** — spoken aloud via OpenAI TTS in voice mode, or printed to the terminal.
+5. **Output** — spoken aloud via OpenAI TTS (buffered WAV or streaming PCM playback) in voice mode, or printed to the terminal.
 
 Dashed arrows indicate **conditional edges**; solid arrows are fixed edges. The loop-back arrows on the outside show tools routing back to their agent. Conversation history persists across turns via **MemorySaver** with a `thread_id`, so follow-up queries like "what's the price?" work without repeating context.
 
@@ -224,7 +242,7 @@ In **voice mode** (`--voice`), HITL prompts are spoken aloud via TTS and the use
 | **Structured output** — Pydantic schema for routing | `orchestrator.py` |
 | **Human-in-the-Loop** — `interrupt()` + `Command(resume=)` (voice-aware) | `order_agent.py`, `main.py` |
 | **Multi-turn memory** — `MemorySaver` + conversation context passed to orchestrator & agents | `graph.py`, `orchestrator.py`, `menu_agent.py` |
-| **Voice I/O** — Whisper STT + OpenAI TTS, playback via `sounddevice` | `voice/recorder.py`, `voice/speaker.py` |
+| **Voice I/O** — Whisper STT, energy-based VAD, buffered/streaming OpenAI TTS via `sounddevice` | `voice/recorder.py`, `voice/speaker.py` |
 
 ---
 
