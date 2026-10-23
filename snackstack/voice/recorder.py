@@ -28,23 +28,30 @@ class VoiceRecorder:
     def record_audio(self, duration: int = 5) -> np.ndarray:
         """Capture audio from the default input device."""
         if not AUDIO_HW_AVAILABLE:
-            logger.warning("sounddevice not available — returning silence")
-            return np.zeros(self.sample_rate * duration, dtype=np.float32)
+            raise RuntimeError("Microphone support unavailable. Run uv sync and check sounddevice installation.")
 
         logger.info("Recording for %ds — speak now!", duration)
-        audio = sd.rec(
-            int(duration * self.sample_rate),
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype=np.float32,
-        )
-        sd.wait()
+        try:
+            audio = sd.rec(
+                int(duration * self.sample_rate),
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype=np.float32,
+            )
+            sd.wait()
+        except Exception as exc:
+            raise RuntimeError("Could not record microphone audio. Check macOS microphone permission and input device.") from exc
         logger.info("Recording complete")
         return audio.flatten()
 
     # ── transcription ───────────────────────────────────────
     def transcribe(self, audio: np.ndarray) -> str:
         """Send a numpy audio array to Whisper and return the text."""
+        if not AUDIO_HW_AVAILABLE:
+            raise RuntimeError("Audio dependencies are not installed.")
+        if not np.any(np.abs(audio) > 0.001):
+            logger.warning("No microphone signal detected. Check input device and microphone permissions.")
+            return ""
         buf = io.BytesIO()
         if AUDIO_HW_AVAILABLE:
             sf.write(buf, audio, self.sample_rate, format="WAV")
