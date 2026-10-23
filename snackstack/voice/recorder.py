@@ -46,7 +46,8 @@ class VoiceRecorder:
         return audio.flatten()
 
     def record_vad(self, max_duration: float = 20, silence_duration: float = 1.0,
-                   threshold: float = 0.012, start_timeout: float = 8.0) -> np.ndarray:
+                   threshold: float = 0.012, start_timeout: float = 8.0,
+                   on_speech_start=None, stop_event=None) -> np.ndarray:
         """Record until speech ends using a lightweight RMS energy detector.
 
         This is energy-based VAD, not a neural speech classifier. Works offline.
@@ -63,7 +64,7 @@ class VoiceRecorder:
         try:
             with sd.InputStream(samplerate=self.sample_rate, channels=1,
                                 dtype="float32", blocksize=blocksize) as stream:
-                while elapsed < max_duration:
+                while elapsed < max_duration and not (stop_event and stop_event.is_set()):
                     block, overflow = stream.read(blocksize)
                     if overflow:
                         logger.warning("Microphone input overflow")
@@ -77,6 +78,8 @@ class VoiceRecorder:
                             started = True
                             frames.extend(pre_roll)
                             logger.info("Speech detected")
+                            if on_speech_start:
+                                on_speech_start()
                         elif elapsed >= start_timeout:
                             logger.warning("No speech detected within %.1fs", start_timeout)
                             break
